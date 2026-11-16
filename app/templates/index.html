@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }} · Generador de recetas</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/favicon.ico" alt="" width="28" height="28">
+      <span>{{ app_name }}</span>
+    </div>
+    <div id="session" class="session hidden">
+      <span id="whoami"></span>
+      <a href="/docs" target="_blank" rel="noopener">API</a>
+      <button id="logout" class="btn ghost">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Autenticación -->
+    <section id="auth-view" class="card auth">
+      <h1>Cocina con lo que tienes</h1>
+      <p class="muted">Registra los ingredientes de tu casa y deja que la IA proponga una receta.</p>
+      <div class="tabs">
+        <button class="tab active" data-tab="login">Iniciar sesión</button>
+        <button class="tab" data-tab="register">Crear cuenta</button>
+      </div>
+      <form id="login-form" class="form">
+        <label>Usuario o correo <input name="username" required autocomplete="username"></label>
+        <label>Contraseña <input name="password" type="password" required autocomplete="current-password"></label>
+        <button class="btn primary" type="submit">Entrar</button>
+      </form>
+      <form id="register-form" class="form hidden">
+        <label>Usuario <input name="username" required minlength="3" maxlength="50" pattern="[A-Za-z0-9_.\-]+" autocomplete="username"></label>
+        <label>Correo <input name="email" type="email" required autocomplete="email"></label>
+        <label>Contraseña (mín. 8) <input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+        <button class="btn primary" type="submit">Registrarme</button>
+      </form>
+      <p id="auth-msg" class="msg" role="status"></p>
+    </section>
+
+    <!-- Aplicación -->
+    <section id="app-view" class="hidden">
+      <div class="grid">
+        <div class="card">
+          <h2>Mi inventario</h2>
+          <form id="ingredient-form" class="inline-form">
+            <input name="name" placeholder="Ingrediente (ej. tomate)" required maxlength="100">
+            <input name="quantity" type="number" step="any" min="0" placeholder="Cant.">
+            <input name="unit" placeholder="Unidad" maxlength="30">
+            <button class="btn primary" type="submit">Agregar</button>
+          </form>
+          <p id="ingredient-msg" class="msg" role="status"></p>
+          <ul id="ingredient-list" class="list"></ul>
+          <p id="ingredient-empty" class="muted">Aún no tienes ingredientes.</p>
+        </div>
+
+        <div class="card">
+          <h2>Generar receta</h2>
+          <form id="generate-form" class="form">
+            <div class="row">
+              <label>Tipo de comida
+                <select name="meal_type">
+                  <option value="">Cualquiera</option>
+                  <option value="desayuno">Desayuno</option>
+                  <option value="almuerzo">Almuerzo</option>
+                  <option value="cena">Cena</option>
+                  <option value="postre">Postre</option>
+                  <option value="snack">Snack</option>
+                </select>
+              </label>
+              <label>Porciones <input name="servings" type="number" min="1" max="12" value="2"></label>
+            </div>
+            <button id="generate-btn" class="btn primary" type="submit">Generar con IA</button>
+          </form>
+          <p id="generate-msg" class="msg" role="status"></p>
+          <div id="generated"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="history-head">
+          <h2>Historial de recetas</h2>
+          <label class="muted">Dificultad
+            <select id="filter-difficulty">
+              <option value="">Todas</option>
+              <option value="facil">Fácil</option>
+              <option value="media">Media</option>
+              <option value="dificil">Difícil</option>
+            </select>
+          </label>
+        </div>
+        <div id="recipe-list" class="recipes"></div>
+        <p id="recipe-empty" class="muted">Todavía no has generado recetas.</p>
+      </div>
+    </section>
+  </main>
+
+  <template id="recipe-template">
+    <article class="recipe">
+      <header>
+        <h3 class="r-title"></h3>
+        <div class="r-meta"></div>
+      </header>
+      <div class="r-body">
+        <div><h4>Ingredientes</h4><ul class="r-ingredients"></ul></div>
+        <div><h4>Preparación</h4><ol class="r-steps"></ol></div>
+      </div>
+      <footer>
+        <div class="stars" role="radiogroup" aria-label="Calificación"></div>
+        <button class="btn danger r-delete">Eliminar</button>
+      </footer>
+    </article>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
