@@ -1,0 +1,6 @@
+# Caddy obtiene y renueva el certificado SSL de Let's Encrypt automáticamente.
+# DOMAIN se define en el archivo .env (ej. recetas.midominio.com).
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:8000
+}
