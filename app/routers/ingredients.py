@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.core.security import get_current_user
 from app.database import get_db
 from app.models import Ingredient, User
@@ -24,6 +26,15 @@ def _name_taken(db: Session, user: User, name: str, exclude_id: int | None = Non
     return db.scalar(query) is not None
 
 
+def _commit_or_conflict(db: Session) -> None:
+    """Si dos peticiones simultáneas crean el mismo nombre, responde 409 en vez de 500."""
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ya existe un ingrediente con ese nombre")
+
+
 @router.get("", response_model=list[IngredientOut])
 def list_ingredients(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Lista el inventario del usuario ordenado alfabéticamente."""
@@ -36,12 +47,18 @@ def list_ingredients(db: Session = Depends(get_db), user: User = Depends(get_cur
 def create_ingredient(
     data: IngredientCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    """Agrega un ingrediente al inventario."""
+    """Agrega un ingrediente al inventario (máximo 100 por usuario)."""
+    limit = get_settings().max_ingredients_per_user
+    count = db.scalar(select(func.count(Ingredient.id)).where(Ingredient.user_id == user.id))
+    if count >= limit:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Alcanzaste el máximo de {limit} ingredientes"
+        )
     if _name_taken(db, user, data.name):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Ya tienes '{data.name}' en tu inventario")
     ingredient = Ingredient(user_id=user.id, **data.model_dump())
     db.add(ingredient)
-    db.commit()
+    _commit_or_conflict(db)
     db.refresh(ingredient)
     return ingredient
 
@@ -70,7 +87,7 @@ def update_ingredient(
             raise HTTPException(status.HTTP_409_CONFLICT, "Ya existe otro ingrediente con ese nombre")
     for field, value in changes.items():
         setattr(ingredient, field, value)
-    db.commit()
+    _commit_or_conflict(db)
     db.refresh(ingredient)
     return ingredient
 

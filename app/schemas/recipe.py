@@ -1,6 +1,6 @@
 import unicodedata
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -51,7 +51,7 @@ class LLMRecipe(BaseModel):
 
     nombre: str = Field(min_length=1, max_length=200)
     ingredientes: list[LLMRecipeIngredient] = Field(min_length=1, max_length=40)
-    pasos: list[str] = Field(min_length=1, max_length=30)
+    pasos: list[Annotated[str, Field(max_length=1000)]] = Field(min_length=1, max_length=30)
     tiempo_estimado_min: int = Field(ge=1, le=1440)
     dificultad: Difficulty
 
@@ -92,6 +92,7 @@ class RecipeGenerateRequest(BaseModel):
     servings: int = Field(default=2, ge=1, le=12, description="Número de porciones")
     ingredient_ids: list[int] | None = Field(
         default=None,
+        max_length=100,
         description="Subconjunto del inventario a usar. Si se omite se usa todo el inventario.",
     )
 
