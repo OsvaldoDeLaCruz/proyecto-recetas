@@ -1,6 +1,20 @@
-# Caddy obtiene y renueva el certificado SSL de Let's Encrypt automáticamente.
-# DOMAIN se define en el archivo .env (ej. recetas.midominio.com).
+# Caddy obtiene y renueva el certificado SSL de Let's Encrypt automáticamente
+# y redirige HTTP -> HTTPS. DOMAIN se define en el archivo .env.
 {$DOMAIN} {
 	encode gzip
+
+	# Rechaza cuerpos de petición grandes (la API nunca necesita más de 1 MB)
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		# Obliga al navegador a usar siempre HTTPS
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# No revelar el software del servidor
+		-Server
+		-Via
+	}
+
 	reverse_proxy app:8000
 }

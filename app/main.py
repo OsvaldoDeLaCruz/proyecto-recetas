@@ -36,6 +36,42 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Política de contenido estricta para la interfaz: solo recursos propios, sin scripts inline.
+APP_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+# Swagger/ReDoc cargan sus archivos desde cdn.jsdelivr.net y usan un script inline.
+DOCS_CSP = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://fastapi.tiangolo.com "
+    "https://cdn.redoc.ly; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+    "frame-ancestors 'none'"
+)
+_DOCS_PATHS = ("/docs", "/redoc")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Cabeceras de seguridad en todas las respuestas (HSTS lo añade Caddy sobre HTTPS)."""
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    path = request.url.path
+    headers.setdefault(
+        "Content-Security-Policy", DOCS_CSP if path.startswith(_DOCS_PATHS) else APP_CSP
+    )
+    if path.startswith("/api/"):
+        headers.setdefault("Cache-Control", "no-store")  # no guardar datos privados en caché
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(ingredients.router)
 app.include_router(recipes.router)
