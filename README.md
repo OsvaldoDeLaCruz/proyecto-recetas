@@ -6,8 +6,8 @@ base de datos y el usuario puede verlas, calificarlas (1–5 ★) y eliminarlas.
 
 > Proyecto final · Tecnologías Web (5916) · Universidad Simón Bolívar · 2026-2
 
-- **Aplicación desplegada:** https://recetas.tudominio.com  <!-- reemplazar -->
-- **Documentación de la API (Swagger):** https://recetas.tudominio.com/docs
+- **Aplicación desplegada:** https://74-50-85-180.sslip.io
+- **Documentación de la API (Swagger):** https://74-50-85-180.sslip.io/docs
 
 ## Funcionalidades
 
@@ -228,4 +228,4 @@ Los límites se configuran con `RATE_LIMIT_*` y `MAX_INGREDIENTS_PER_USER` en `.
 
 ## Autores
 
-- Nombre Apellido — código — usuario de GitHub  <!-- completar -->
+- Osvaldo De la Cruz — [@OsvaldoDeLaCruz](https://github.com/OsvaldoDeLaCruz)
