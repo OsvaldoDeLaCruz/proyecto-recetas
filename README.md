@@ -28,7 +28,7 @@ Además: `GET /health` (estado), `GET /docs` (Swagger) y una interfaz web en `/`
 - **Base de datos:** MySQL 8.4 (SQLite para desarrollo/pruebas)
 - **Autenticación:** JWT (PyJWT) + contraseñas con bcrypt
 - **LLM:** OpenRouter (API compatible con OpenAI) vía `httpx`
-- **Pruebas:** pytest (41 pruebas)
+- **Pruebas:** pytest (57 pruebas, incluidas 16 de seguridad)
 - **Despliegue:** Docker, Docker Compose, Caddy (HTTPS automático con Let's Encrypt), VPS
 
 ## Arquitectura
@@ -167,6 +167,7 @@ No requieren MySQL ni API key: usan SQLite en memoria y un LLM falso / transport
 | `tests/test_prompt.py` | Construcción del prompt (inventario, porciones, tipo de comida, campos JSON) |
 | `tests/test_llm_parsing.py` | Parseo de la respuesta del LLM (JSON válido, markdown, normalización, errores) y `LLMService` con HTTP simulado (reintentos, errores HTTP) |
 | `tests/test_api.py` | Endpoints: auth, CRUD de ingredientes, generación, historial, calificación, eliminación y aislamiento entre usuarios |
+| `tests/test_security.py` | Clave JWT débil, tokens falsificados/expirados/`alg=none`, fuerza bruta (429), contraseñas > 72 bytes, cabeceras de seguridad, límites anti-abuso e inyección SQL y de prompt |
 
 Dentro del contenedor: `docker compose exec app pytest`.
 
@@ -206,11 +207,24 @@ Actualizar tras un `git pull`: `docker compose up -d --build app`.
 
 ## Seguridad
 
-- Secretos solo en `.env` (ignorado por Git); el repositorio incluye `.env.example` sin valores reales.
-- Contraseñas con bcrypt; JWT firmado con `JWT_SECRET_KEY` y expiración configurable.
-- Cada consulta filtra por `user_id`: un usuario no puede ver ni modificar datos de otro (404).
-- Los nombres de ingredientes se validan con una expresión regular, lo que limita la inyección de instrucciones en el prompt.
-- MySQL y la app no se exponen a Internet; solo Caddy publica los puertos 80/443.
+| Amenaza | Medida |
+|---|---|
+| Credenciales expuestas | Secretos solo en `.env` (ignorado por Git); `.env.example` sin valores reales |
+| Clave JWT débil o por defecto | La app **no arranca** si `JWT_SECRET_KEY` tiene menos de 32 caracteres o es la de ejemplo |
+| Tokens falsificados | JWT HS256 con algoritmo fijo (se rechaza `alg=none`), `exp` y `sub` obligatorios, expiración de 60 min |
+| Contraseñas filtradas | bcrypt con sal; máximo 72 bytes validado (evita errores 500 con caracteres multibyte) |
+| Fuerza bruta en login | 10 intentos/min por IP → HTTP 429 con `Retry-After`; tiempo de respuesta igual exista o no el usuario |
+| Abuso del LLM / costos | 5 generaciones/min por usuario, máx. 100 ingredientes por usuario y 100 IDs por petición |
+| Acceso a datos ajenos (IDOR) | Cada consulta filtra por `user_id`; recursos ajenos responden 404 |
+| Inyección SQL | Solo consultas parametrizadas del ORM SQLAlchemy |
+| XSS | El frontend inserta datos con `textContent`; CSP `script-src 'self'` sin scripts inline |
+| Clickjacking / sniffing | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` |
+| Inyección de prompt | Nombres validados con regex (sin `<` `>`); el inventario va entre `<inventario>` y el sistema ordena ignorar instrucciones; la salida se valida con un esquema estricto |
+| Transporte | HTTPS con Let's Encrypt, HSTS y redirección HTTP→HTTPS (Caddy); cuerpos > 1 MB rechazados |
+| Superficie expuesta | MySQL y la app no se publican; solo Caddy abre 80/443; contenedor sin root; sin cabecera `Server` |
+| Datos sensibles en caché | Respuestas `/api/*` con `Cache-Control: no-store` |
+
+Los límites se configuran con `RATE_LIMIT_*` y `MAX_INGREDIENTS_PER_USER` en `.env`.
 
 ## Autores
 
