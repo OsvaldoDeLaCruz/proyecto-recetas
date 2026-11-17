@@ -25,6 +25,11 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+# Hash ficticio: se verifica contra él cuando el usuario no existe, para que el
+# tiempo de respuesta no revele qué usuarios están registrados.
+DUMMY_PASSWORD_HASH = hash_password("contrasena-ficticia-para-igualar-tiempos")
+
+
 def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(
@@ -44,7 +49,12 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],  # nunca se acepta "none" ni otro algoritmo
+            options={"require": ["exp", "sub"]},
+        )
         user_id = int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         raise credentials_error

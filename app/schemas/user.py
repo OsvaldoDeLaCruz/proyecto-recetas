@@ -13,6 +13,16 @@ class UserCreate(BaseModel):
     def normalize_username(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, v: str) -> str:
+        # bcrypt solo admite 72 BYTES: "ñ" o un emoji ocupan 2-4 bytes cada uno.
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("La contraseña es demasiado larga (máximo 72 bytes)")
+        if v.strip() != v or not v.strip():
+            raise ValueError("La contraseña no puede empezar ni terminar con espacios")
+        return v
+
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
