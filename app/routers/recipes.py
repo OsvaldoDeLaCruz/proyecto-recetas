@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -24,6 +26,12 @@ from app.services.llm_service import (
 router = APIRouter(prefix="/api/recipes", tags=["Recetas"])
 
 
+def _as_utc(value: datetime) -> datetime:
+    # MySQL/SQLite devuelven DATETIME sin zona; se guardó en UTC, así que se marca como UTC
+    # para que el navegador lo convierta a la hora local del usuario.
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 def to_out(recipe: Recipe) -> RecipeOut:
     return RecipeOut(
         id=recipe.id,
@@ -34,7 +42,7 @@ def to_out(recipe: Recipe) -> RecipeOut:
         difficulty=recipe.difficulty,
         servings=recipe.servings,
         llm_model=recipe.llm_model,
-        created_at=recipe.created_at,
+        created_at=_as_utc(recipe.created_at),
         rating=recipe.rating.score if recipe.rating else None,
     )
 

@@ -70,6 +70,8 @@ def test_generar_receta_se_guarda_en_historial(client, auth_headers, fake_llm):
     assert recipe["servings"] == 4
     assert recipe["rating"] is None
     assert recipe["llm_model"] == "fake/test-model"
+    # La fecha viaja con zona horaria UTC para que el navegador la muestre en hora local.
+    assert recipe["created_at"].endswith(("Z", "+00:00"))
 
     # El servicio recibió el inventario del usuario
     assert fake_llm.calls == [{"ingredients": ["arroz", "pollo"], "meal_type": "almuerzo", "servings": 4}]
