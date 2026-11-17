@@ -1,6 +1,10 @@
 """Punto de entrada de la aplicación FastAPI."""
+import random
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -17,10 +21,25 @@ STATIC_DIR = BASE_DIR / "static"
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def create_tables(attempts: int = 5) -> None:
+    """Crea las tablas si no existen (usuarios, ingredientes, recetas, calificaciones).
+
+    Con varios workers de Uvicorn todos intentan crearlas a la vez; si uno pierde la
+    carrera ("table already exists") se reintenta y la segunda vez ya no hay nada que crear.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except SQLAlchemyError:
+            if attempt == attempts:
+                raise
+            time.sleep(random.uniform(0.5, 1.5) * attempt)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Crea las tablas si no existen (usuarios, ingredientes, recetas, calificaciones).
-    Base.metadata.create_all(bind=engine)
+    create_tables()
     yield
 
 
