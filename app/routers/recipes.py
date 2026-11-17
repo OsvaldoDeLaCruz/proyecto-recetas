@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import get_settings
+from app.core.rate_limit import generate_limiter
 from app.core.security import get_current_user
 from app.database import get_db
 from app.models import Ingredient, Rating, Recipe, User
@@ -53,7 +55,12 @@ def generate_recipe(
 ):
     """Genera una receta con el LLM a partir del inventario actual y la guarda en el historial."""
     data = data or RecipeGenerateRequest()
-    query = select(Ingredient).where(Ingredient.user_id == user.id).order_by(Ingredient.name)
+    query = (
+        select(Ingredient)
+        .where(Ingredient.user_id == user.id)
+        .order_by(Ingredient.name)
+        .limit(get_settings().max_ingredients_per_user)
+    )
     if data.ingredient_ids:
         query = query.where(Ingredient.id.in_(data.ingredient_ids))
     inventory = db.scalars(query).all()
@@ -63,6 +70,9 @@ def generate_recipe(
             status.HTTP_400_BAD_REQUEST,
             "Tu inventario está vacío: agrega ingredientes antes de generar una receta",
         )
+
+    # Máx. 5 generaciones por minuto por usuario (cada llamada al LLM tiene costo).
+    generate_limiter.hit(f"user:{user.id}")
 
     try:
         generated = llm.generate_recipe(inventory, meal_type=data.meal_type, servings=data.servings)

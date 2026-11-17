@@ -54,6 +54,16 @@ class FakeLLMService:
         return parse_recipe_response(self.content)
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """Cada prueba empieza con los contadores de límite de peticiones en cero."""
+    from app.core.rate_limit import ALL_LIMITERS
+
+    for limiter in ALL_LIMITERS:
+        limiter.reset()
+    yield
+
+
 @pytest.fixture()
 def fake_llm():
     return FakeLLMService()
