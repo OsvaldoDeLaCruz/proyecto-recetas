@@ -6,12 +6,17 @@ ya validado. El usuario no escribe prompts libres (no es un chatbot).
 
 Flujo:
     inventario -> build_prompt() -> OpenRouter (HTTP) -> parse_recipe_response() -> LLMRecipe
+
+Con OPENROUTER_MODEL=auto el servicio elige solo el modelo: consulta el catálogo de
+OpenRouter, toma los modelos gratuitos disponibles y usa el primero que responda bien.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+import threading
+import time
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -133,47 +138,145 @@ def parse_recipe_response(content: str | None) -> LLMRecipe:
         raise LLMResponseError(f"La receta no cumple el formato esperado: {exc}") from exc
 
 
+# ---------- Selección automática de modelo ----------
+
+AUTO_MODEL = "auto"
+CATALOG_TTL_SECONDS = 3600  # el catálogo de OpenRouter se consulta como máximo cada hora
+# Respaldo si no se puede leer el catálogo (modelos gratuitos conocidos).
+FALLBACK_FREE_MODELS = (
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+)
+
+_state_lock = threading.Lock()
+_catalog: dict = {"fetched_at": 0.0, "models": [], "json_models": set()}
+_preferred_model: str | None = None  # último modelo que funcionó (se prueba primero)
+
+
+def reset_model_cache() -> None:
+    """Olvida el catálogo y el modelo preferido (usado en pruebas)."""
+    global _preferred_model
+    with _state_lock:
+        _catalog.update(fetched_at=0.0, models=[], json_models=set())
+        _preferred_model = None
+
+
+def _is_free_text_model(model: dict) -> bool:
+    pricing = model.get("pricing") or {}
+    outputs = (model.get("architecture") or {}).get("output_modalities") or ["text"]
+    free = str(model.get("id", "")).endswith(":free") or (
+        str(pricing.get("prompt")) == "0" and str(pricing.get("completion")) == "0"
+    )
+    return free and "text" in outputs
+
+
+def select_free_models(catalog: list[dict]) -> tuple[list[str], set[str]]:
+    """Del catálogo de OpenRouter devuelve los modelos gratuitos de texto, en orden de preferencia.
+
+    Primero los que soportan respuesta JSON (`response_format`), luego el resto, manteniendo
+    el orden del catálogo (OpenRouter lista primero los más recientes).
+    """
+    free = [m for m in catalog if isinstance(m, dict) and m.get("id") and _is_free_text_model(m)]
+    json_models = {
+        m["id"]
+        for m in free
+        if {"response_format", "structured_outputs"} & set(m.get("supported_parameters") or [])
+    }
+    ordered = [m["id"] for m in free if m["id"] in json_models]
+    ordered += [m["id"] for m in free if m["id"] not in json_models]
+    return ordered, json_models
+
+
 class LLMService:
     def __init__(self, settings: Settings | None = None, client: httpx.Client | None = None):
         self.settings = settings or get_settings()
         self._client = client
+        self.last_model: str | None = None  # modelo que generó la última receta
 
     @property
     def model(self) -> str:
-        return self.settings.openrouter_model
+        return self.last_model or self.settings.openrouter_model
 
-    def _call_provider(self, messages: list[dict[str, str]]) -> str:
-        if not self.settings.openrouter_api_key:
-            raise LLMUnavailableError("OPENROUTER_API_KEY no está configurada")
+    # ----- HTTP -----
 
-        payload = {
-            "model": self.settings.openrouter_model,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 1200,
-        }
-        headers = {
+    def _headers(self) -> dict[str, str]:
+        return {
             "Authorization": f"Bearer {self.settings.openrouter_api_key}",
             "Content-Type": "application/json",
             "X-Title": self.settings.app_name,
         }
-        url = f"{self.settings.openrouter_base_url.rstrip('/')}/chat/completions"
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        url = f"{self.settings.openrouter_base_url.rstrip('/')}/{path}"
         client = self._client or httpx.Client(timeout=self.settings.llm_timeout_seconds)
         try:
-            response = client.post(url, json=payload, headers=headers)
+            return client.request(method, url, headers=self._headers(), **kwargs)
         except httpx.HTTPError as exc:
             raise LLMUnavailableError(f"No se pudo contactar al proveedor LLM: {exc}") from exc
         finally:
             if self._client is None:
                 client.close()
 
-        if response.status_code != 200:
-            logger.warning("LLM HTTP %s: %s", response.status_code, response.text[:300])
-            raise LLMUnavailableError(f"El proveedor LLM respondió HTTP {response.status_code}")
+    # ----- Modelos -----
 
+    def _load_catalog(self) -> tuple[list[str], set[str]]:
+        """Modelos gratuitos disponibles según OpenRouter (con caché de 1 hora)."""
+        now = time.monotonic()
+        with _state_lock:
+            if _catalog["models"] and now - _catalog["fetched_at"] < CATALOG_TTL_SECONDS:
+                return list(_catalog["models"]), set(_catalog["json_models"])
         try:
-            return response.json()["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            response = self._request("GET", "models")
+            response.raise_for_status()
+            models, json_models = select_free_models(response.json().get("data", []))
+        except (LLMError, httpx.HTTPError, ValueError, AttributeError) as exc:
+            logger.warning("No se pudo leer el catálogo de modelos: %s", exc)
+            models, json_models = [], set()
+        if not models:
+            return list(FALLBACK_FREE_MODELS), set(FALLBACK_FREE_MODELS)
+        with _state_lock:
+            _catalog.update(fetched_at=now, models=models, json_models=json_models)
+        return list(models), set(json_models)
+
+    def candidate_models(self) -> tuple[list[str], set[str]]:
+        """Lista de modelos a probar, en orden.
+
+        - OPENROUTER_MODEL=auto  -> modelos gratuitos del catálogo; primero el último que funcionó.
+        - OPENROUTER_MODEL=a,b,c -> esos modelos, en ese orden.
+        """
+        configured = self.settings.openrouter_model.strip()
+        if configured.lower() != AUTO_MODEL:
+            return [m.strip() for m in configured.split(",") if m.strip()], set()
+        models, json_models = self._load_catalog()
+        if _preferred_model in models:
+            models.remove(_preferred_model)
+            models.insert(0, _preferred_model)
+        return models[: max(1, self.settings.llm_max_models_per_request)], json_models
+
+    # ----- Generación -----
+
+    def _call_provider(
+        self, messages: list[dict[str, str]], model: str, json_mode: bool = False
+    ) -> str:
+        payload = {"model": model, "messages": messages, "temperature": 0.7, "max_tokens": 1200}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        response = self._request("POST", "chat/completions", json=payload)
+
+        if response.status_code != 200:
+            logger.warning("LLM %s HTTP %s: %s", model, response.status_code, response.text[:300])
+            raise LLMUnavailableError(f"El modelo {model} respondió HTTP {response.status_code}")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise LLMResponseError("Respuesta del proveedor con formato inesperado") from exc
+        if isinstance(body, dict) and body.get("error"):
+            # OpenRouter a veces devuelve 200 con el error del proveedor dentro del cuerpo.
+            raise LLMUnavailableError(f"El modelo {model} devolvió un error: {body['error']}")
+        try:
+            return body["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
             raise LLMResponseError("Respuesta del proveedor con formato inesperado") from exc
 
     def generate_recipe(
@@ -182,22 +285,41 @@ class LLMService:
         meal_type: str | None = None,
         servings: int = 2,
     ) -> LLMRecipe:
-        """Genera una receta a partir del inventario. Reintenta si el JSON no es válido."""
+        """Genera una receta probando los modelos disponibles hasta que uno responda bien.
+
+        - Si un modelo no está disponible (404, 429, 5xx, red) se pasa al siguiente.
+        - Si responde con JSON inválido se reintenta el mismo modelo (LLM_MAX_RETRIES)
+          y luego se pasa al siguiente.
+        - El modelo que funcionó se recuerda y se prueba primero en la próxima petición.
+        """
+        global _preferred_model
         messages = build_prompt(ingredients, meal_type=meal_type, servings=servings)
         if not self.settings.openrouter_api_key:
             raise LLMUnavailableError("OPENROUTER_API_KEY no está configurada")
+
+        models, json_models = self.candidate_models()
         attempts = max(1, self.settings.llm_max_retries)
-        last_error: LLMError | None = None
+        last_error: LLMError = LLMUnavailableError("No hay modelos disponibles")
 
-        for attempt in range(1, attempts + 1):
-            try:
-                content = self._call_provider(messages)
-                return parse_recipe_response(content)
-            except LLMError as exc:
-                last_error = exc
-                logger.warning("Intento %s/%s fallido: %s", attempt, attempts, exc)
+        for model in models:
+            for attempt in range(1, attempts + 1):
+                try:
+                    content = self._call_provider(messages, model, json_mode=model in json_models)
+                    recipe = parse_recipe_response(content)
+                except LLMUnavailableError as exc:
+                    last_error = exc
+                    logger.warning("Modelo %s no disponible: %s", model, exc)
+                    break  # siguiente modelo
+                except LLMResponseError as exc:
+                    last_error = exc
+                    logger.warning("Modelo %s, intento %s/%s inválido: %s", model, attempt, attempts, exc)
+                    continue  # reintenta el mismo modelo
+                self.last_model = model
+                with _state_lock:
+                    _preferred_model = model
+                logger.info("Receta generada con %s", model)
+                return recipe
 
-        assert last_error is not None
         raise last_error
 
 

@@ -31,10 +31,13 @@ class Settings(BaseSettings):
 
     # LLM (OpenRouter, API compatible con OpenAI)
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemma-4-31b-it:free"
+    # "auto": elige solo el primer modelo gratuito disponible en OpenRouter (recomendado).
+    # También acepta un modelo fijo o una lista en orden: "modelo-a:free,modelo-b:free".
+    openrouter_model: str = "auto"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    llm_timeout_seconds: float = 60.0
-    llm_max_retries: int = 2
+    llm_timeout_seconds: float = 45.0  # por modelo
+    llm_max_retries: int = 2  # reintentos con el mismo modelo si el JSON es inválido
+    llm_max_models_per_request: int = 4  # cuántos modelos probar antes de rendirse
 
     @field_validator("jwt_secret_key")
     @classmethod
