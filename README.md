@@ -28,7 +28,7 @@ Además: `GET /health` (estado), `GET /docs` (Swagger) y una interfaz web en `/`
 - **Base de datos:** MySQL 8.4 (SQLite para desarrollo/pruebas)
 - **Autenticación:** JWT (PyJWT) + contraseñas con bcrypt
 - **LLM:** OpenRouter (API compatible con OpenAI) vía `httpx`
-- **Pruebas:** pytest (57 pruebas, incluidas 16 de seguridad)
+- **Pruebas:** pytest (65 pruebas, incluidas 16 de seguridad y 8 de selección de modelo)
 - **Despliegue:** Docker, Docker Compose, Caddy (HTTPS automático con Let's Encrypt), VPS
 
 ## Arquitectura
@@ -51,6 +51,23 @@ Navegador ──HTTPS──► Caddy (443, certificado Let's Encrypt)
 El LLM **no se expone como chat**: el usuario solo elige parámetros acotados (tipo de comida y
 porciones). `LLMService` arma el prompt con el inventario, llama al proveedor, valida la
 respuesta contra un esquema Pydantic (`LLMRecipe`) y reintenta si el JSON no es válido.
+
+### Selección automática del modelo (`OPENROUTER_MODEL=auto`)
+
+Los modelos gratuitos de OpenRouter aparecen y desaparecen con frecuencia, así que la app
+elige el modelo **sola**:
+
+1. Consulta el catálogo público `GET /models` de OpenRouter (en caché durante 1 hora).
+2. Se queda con los modelos **gratuitos** que generan **texto**, poniendo primero los que
+   soportan respuesta JSON (`response_format`), que se activa automáticamente.
+3. Prueba el primero. Si no está disponible (404, 429, 5xx, error de red o del proveedor)
+   pasa al siguiente; si devuelve JSON inválido lo reintenta y luego pasa al siguiente
+   (máximo `LLM_MAX_MODELS_PER_REQUEST` modelos por receta).
+4. Recuerda el modelo que funcionó y lo usa primero en la siguiente petición.
+5. Si no se puede leer el catálogo, usa una lista de respaldo de modelos gratuitos conocidos.
+
+El modelo que generó cada receta queda guardado en `recetas.llm_model`. Para fijar uno o
+varios modelos en orden: `OPENROUTER_MODEL=modelo-a:free,modelo-b:free`.
 
 ### Contrato JSON del LLM
 
@@ -167,6 +184,7 @@ No requieren MySQL ni API key: usan SQLite en memoria y un LLM falso / transport
 | `tests/test_prompt.py` | Construcción del prompt (inventario, porciones, tipo de comida, campos JSON) |
 | `tests/test_llm_parsing.py` | Parseo de la respuesta del LLM (JSON válido, markdown, normalización, errores) y `LLMService` con HTTP simulado (reintentos, errores HTTP) |
 | `tests/test_api.py` | Endpoints: auth, CRUD de ingredientes, generación, historial, calificación, eliminación y aislamiento entre usuarios |
+| `tests/test_model_selection.py` | Selección automática del modelo: solo gratuitos de texto, modo JSON, salto de modelos caídos (429/404/error), reintento ante JSON inválido, memoria del último modelo, caché del catálogo y lista de respaldo |
 | `tests/test_security.py` | Clave JWT débil, tokens falsificados/expirados/`alg=none`, fuerza bruta (429), contraseñas > 72 bytes, cabeceras de seguridad, límites anti-abuso e inyección SQL y de prompt |
 
 Dentro del contenedor: `docker compose exec app pytest`.
