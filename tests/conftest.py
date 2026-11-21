@@ -59,8 +59,11 @@ def reset_rate_limits():
     """Cada prueba empieza con los contadores de límite de peticiones en cero."""
     from app.core.rate_limit import ALL_LIMITERS
 
+    from app.services.llm_service import reset_model_cache
+
     for limiter in ALL_LIMITERS:
         limiter.reset()
+    reset_model_cache()  # cada prueba empieza sin catálogo ni modelo preferido
     yield
 
 
