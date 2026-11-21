@@ -130,6 +130,20 @@ def test_si_ningun_modelo_responde_lanza_error_controlado():
     assert len(fake.models_called) == 3  # probó los 3 gratuitos y se rindió
 
 
+def test_catalogo_se_lee_sin_api_key_y_sin_cabecera_vacia():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={"data": CATALOG})
+
+    settings = Settings(openrouter_api_key="", openrouter_model="auto")
+    llm = LLMService(settings=settings, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    models, _ = llm.candidate_models()
+    assert models[0] == "acme/json-a:free"
+    assert seen["auth"] is None
+
+
 def test_lista_fija_de_modelos_respeta_el_orden_y_no_consulta_catalogo():
     fake = FakeOpenRouter({"x/b:free": completion(json.dumps(SAMPLE_RECIPE))})
     llm = service(fake, model="x/a:free, x/b:free")

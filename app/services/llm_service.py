@@ -201,11 +201,10 @@ class LLMService:
     # ----- HTTP -----
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-            "Content-Type": "application/json",
-            "X-Title": self.settings.app_name,
-        }
+        headers = {"Content-Type": "application/json", "X-Title": self.settings.app_name}
+        if self.settings.openrouter_api_key:  # el catálogo /models es público y no la necesita
+            headers["Authorization"] = f"Bearer {self.settings.openrouter_api_key}"
+        return headers
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = f"{self.settings.openrouter_base_url.rstrip('/')}/{path}"
